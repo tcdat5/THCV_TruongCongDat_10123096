@@ -1,56 +1,64 @@
+#include <assert.h>
 #include <math.h>
 #include "image.h"
 
 float nn_interpolate(image im, float x, float y, int c)
 {
-    // TODO Fill in
-    return get_pixel(im, (int)round(x), (int)round(y), c);
+    return get_pixel(im, (int)roundf(x), (int)roundf(y), c);
+}
+
+static float source_coordinate(int destination, int source_size,
+                               int destination_size)
+{
+    return ((destination + 0.5f) * source_size / destination_size) - 0.5f;
 }
 
 image nn_resize(image im, int w, int h)
 {
-    // TODO Fill in (also fix that first line)
-    image newIm = make_image(w,h,im.c);
-    float m_x = (im.w/(float)w), c_x = (im.w - w)/(float)(2*w);
-    float m_y = (im.h/(float)h), c_y = (im.h - h)/(float)(2*h);
-    float xNew, yNew;
-    for(int i=0; i<w; ++i){
-        xNew = m_x*i + c_x;
-        for(int j=0; j<h; ++j){
-            yNew = m_y*j + c_y;
-            for(int c=0; c<im.c; ++c)
-                set_pixel(newIm, i, j, c, nn_interpolate(im, xNew, yNew, c));
+    assert(w > 0 && h > 0);
+    image resized = make_image(w, h, im.c);
+
+    for (int y = 0; y < h; ++y) {
+        float source_y = source_coordinate(y, im.h, h);
+        for (int x = 0; x < w; ++x) {
+            float source_x = source_coordinate(x, im.w, w);
+            for (int c = 0; c < im.c; ++c) {
+                set_pixel(resized, x, y, c,
+                          nn_interpolate(im, source_x, source_y, c));
+            }
         }
     }
-    return newIm;
+    return resized;
 }
 
 float bilinear_interpolate(image im, float x, float y, int c)
 {
-    // TODO
-    float x1 = floor(x), x2 = x1+1;
-    float y1 = floor(y), y2 = y1+1;
-    float d1 = x-x1, d2 = x2-x, d3 = y-y1, d4 = y2 - y;
-    float a1 = d1*d3, a2 = d2*d3, a3 = d1*d4, a4 = d2*d4;
-    return a4*get_pixel(im, (int)x1, (int)y1, c) + a3*get_pixel(im, (int)x2, (int)y1, c) +
-            a2*get_pixel(im, (int)x1, (int)y2, c) + a1*get_pixel(im, (int)x2, (int)y2, c);
+    int left = (int)floorf(x);
+    int top = (int)floorf(y);
+    float dx = x - left;
+    float dy = y - top;
+
+    float top_value = (1.0f - dx) * get_pixel(im, left, top, c)
+                    + dx * get_pixel(im, left + 1, top, c);
+    float bottom_value = (1.0f - dx) * get_pixel(im, left, top + 1, c)
+                       + dx * get_pixel(im, left + 1, top + 1, c);
+    return (1.0f - dy) * top_value + dy * bottom_value;
 }
 
 image bilinear_resize(image im, int w, int h)
 {
-    // TODO
-    image newIm = make_image(w,h,im.c);
-    float m_x = (im.w/(float)w), c_x = (im.w - w)/(float)(2*w);
-    float m_y = (im.h/(float)h), c_y = (im.h - h)/(float)(2*h);
-    float xNew, yNew;
-    for(int i=0; i<w; ++i){
-        xNew = m_x*i + c_x;
-        for(int j=0; j<h; ++j){
-            yNew = m_y*j + c_y;
-            for(int c=0; c<im.c; ++c)
-                set_pixel(newIm, i, j, c, bilinear_interpolate(im, xNew, yNew, c));
+    assert(w > 0 && h > 0);
+    image resized = make_image(w, h, im.c);
+
+    for (int y = 0; y < h; ++y) {
+        float source_y = source_coordinate(y, im.h, h);
+        for (int x = 0; x < w; ++x) {
+            float source_x = source_coordinate(x, im.w, w);
+            for (int c = 0; c < im.c; ++c) {
+                set_pixel(resized, x, y, c,
+                          bilinear_interpolate(im, source_x, source_y, c));
+            }
         }
     }
-    return newIm;
+    return resized;
 }
-

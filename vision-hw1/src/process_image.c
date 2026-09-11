@@ -1,185 +1,151 @@
-#include <stdio.h>
-#include <string.h>
 #include <assert.h>
 #include <math.h>
+#include <string.h>
 #include "image.h"
+
+static int clamp_coordinate(int value, int upper_bound)
+{
+    if (value < 0) return 0;
+    if (value >= upper_bound) return upper_bound - 1;
+    return value;
+}
 
 float get_pixel(image im, int x, int y, int c)
 {
-    int h = im.h, w = im.w;
-    if(x<0 || x>=w)
-        x = x<0?0:w-1;
-    if(y<0 || y>=h)
-        y = y<0?0:h-1;
-    if(c<0 || c>=im.c)
-        c = c<0?0:im.c-1;
-    return *(im.data+(c*h*w)+(w*y)+x);
+    assert(im.data != 0 && im.w > 0 && im.h > 0 && im.c > 0);
+    x = clamp_coordinate(x, im.w);
+    y = clamp_coordinate(y, im.h);
+    c = clamp_coordinate(c, im.c);
+    return im.data[c * im.w * im.h + y * im.w + x];
 }
 
 void set_pixel(image im, int x, int y, int c, float v)
 {
-    int h = im.h, w = im.w, nbC = im.c;
-    if(x>=0 && x<w && y>=0 && y<h && c>=0 && c<nbC)
-       *(im.data+(c*h*w)+(w*y)+x) = v;
+    if (!im.data || x < 0 || x >= im.w || y < 0 || y >= im.h ||
+        c < 0 || c >= im.c) {
+        return;
+    }
+    im.data[c * im.w * im.h + y * im.w + x] = v;
 }
 
 image copy_image(image im)
 {
-    int nbPixels = im.w * im.h * im.c;
     image copy = make_image(im.w, im.h, im.c);
-    // TODO Fill this in
-    memcpy(copy.data, im.data, nbPixels * sizeof(im.data[0]));
+    size_t count = (size_t)im.w * im.h * im.c;
+    memcpy(copy.data, im.data, count * sizeof(float));
     return copy;
 }
 
 image rgb_to_grayscale(image im)
 {
-    int skipAmt = im.w * im.h;
     assert(im.c == 3);
     image gray = make_image(im.w, im.h, 1);
-    // TODO Fill this in
-    float *temp, grayVal;
-    for(int i = 0; i < skipAmt; ++i){
-        grayVal = 0;
-        temp = im.data + i;
-        grayVal += (*temp * 0.299);
-        temp += skipAmt;
-        grayVal += (*temp * 0.587);
-        temp += skipAmt;
-        grayVal += (*temp * 0.114);
-        *(gray.data + i) = grayVal;
+
+    for (int y = 0; y < im.h; ++y) {
+        for (int x = 0; x < im.w; ++x) {
+            float value = 0.299f * get_pixel(im, x, y, 0)
+                        + 0.587f * get_pixel(im, x, y, 1)
+                        + 0.114f * get_pixel(im, x, y, 2);
+            set_pixel(gray, x, y, 0, value);
+        }
     }
     return gray;
 }
 
 void shift_image(image im, int c, float v)
 {
-    // TODO Fill this in
-    float *temp = im.data + (im.w * im.h * c);
-    for(int i = 0; i < (im.w*im.h); ++i)
-        *(temp + i) += v;
+    if (c < 0 || c >= im.c) return;
+    int offset = c * im.w * im.h;
+    int channel_size = im.w * im.h;
+    for (int i = 0; i < channel_size; ++i) im.data[offset + i] += v;
 }
 
 void scale_image(image im, int c, float v)
 {
-    // TODO Fill this in
-    float *temp = im.data + (im.w * im.h * c);
-    for(int i = 0; i < (im.w*im.h); ++i)
-        *(temp + i) *= v;
+    if (c < 0 || c >= im.c) return;
+    int offset = c * im.w * im.h;
+    int channel_size = im.w * im.h;
+    for (int i = 0; i < channel_size; ++i) im.data[offset + i] *= v;
 }
 
 void clamp_image(image im)
 {
-    // TODO Fill this in
-    int nbPixels = im.w * im.h * im.c;
-    float val;
-    for(int i = 0; i < nbPixels; ++i){
-        val = *(im.data + i);
-        if(val<0)
-            val = 0;
-        else if(val > 1)
-            val = 1;
-        *(im.data + i) = val;
+    int count = im.w * im.h * im.c;
+    for (int i = 0; i < count; ++i) {
+        if (im.data[i] < 0.0f) im.data[i] = 0.0f;
+        else if (im.data[i] > 1.0f) im.data[i] = 1.0f;
     }
 }
 
-
-// These might be handy
-float three_way_max(float a, float b, float c)
+static float maximum3(float a, float b, float c)
 {
-    return (a > b) ? ( (a > c) ? a : c) : ( (b > c) ? b : c) ;
+    return fmaxf(a, fmaxf(b, c));
 }
 
-float three_way_min(float a, float b, float c)
+static float minimum3(float a, float b, float c)
 {
-    return (a < b) ? ( (a < c) ? a : c) : ( (b < c) ? b : c) ;
+    return fminf(a, fminf(b, c));
 }
 
 void rgb_to_hsv(image im)
 {
-    // TODO Fill this in
-    int nbPixels = im.h * im.w;
-    float r,g,b,c,v,s,h,h_des, *temp;
-    for(int i = 0; i<nbPixels; ++i){
-        temp = (im.data + i);
-        r = *temp;
-        temp += nbPixels;
-        g = *temp;
-        temp += nbPixels;
-        b = *temp;
-        v = three_way_max(r,g,b);
-        c = v - three_way_min(r,g,b);
-        if(v)
-            s = c/v;
-        else
-            s = 0;
-        if(c==0)
-            h = 0;
-        else{
-            if(v==r)
-                h_des = (g-b)/c;
-            else if(v==g)
-                h_des = ((b-r)/c) + 2;
-            else
-                h_des = ((r-g)/c) + 4;
-            if(h_des<0)
-                h = h_des/6 + 1;
-            else
-                h = h_des/6;
-        }
-        temp = (im.data + i);
-        *temp = h;
-        temp += nbPixels;
-        *temp = s;
-        temp += nbPixels;
-        *temp = v;
-    }
-}
+    assert(im.c == 3);
+    for (int y = 0; y < im.h; ++y) {
+        for (int x = 0; x < im.w; ++x) {
+            float r = get_pixel(im, x, y, 0);
+            float g = get_pixel(im, x, y, 1);
+            float b = get_pixel(im, x, y, 2);
+            float v = maximum3(r, g, b);
+            float chroma = v - minimum3(r, g, b);
+            float s = v == 0.0f ? 0.0f : chroma / v;
+            float h = 0.0f;
 
-float max(float a, float b){
-    return a>=b?a:b;
+            if (chroma != 0.0f) {
+                if (v == r) h = (g - b) / chroma;
+                else if (v == g) h = (b - r) / chroma + 2.0f;
+                else h = (r - g) / chroma + 4.0f;
+                h /= 6.0f;
+                if (h < 0.0f) h += 1.0f;
+            }
+
+            set_pixel(im, x, y, 0, h);
+            set_pixel(im, x, y, 1, s);
+            set_pixel(im, x, y, 2, v);
+        }
+    }
 }
 
 void hsv_to_rgb(image im)
 {
-    int nbPixels = im.h * im.w;
-    float r,g,b,v,s,h,c,h_des,m, *temp;
-    for(int i = 0; i<nbPixels; ++i){
-        temp = (im.data + i);
-        h = *temp;
-        temp += nbPixels;
-        s = *temp;
-        temp += nbPixels;
-        v = *temp;
-        c = s*v;
-        m = v-c;
-        if(c==0){
-            r=v;
-            g=v;
-            b=v;
-        }
-        else{
-            if(h<=1 && h>(5/(float)6)){
-                h_des = (h-1)*6;
-                r=v;g=m;b=g-(h_des*c);
+    assert(im.c == 3);
+    for (int y = 0; y < im.h; ++y) {
+        for (int x = 0; x < im.w; ++x) {
+            float h = get_pixel(im, x, y, 0);
+            float s = get_pixel(im, x, y, 1);
+            float v = get_pixel(im, x, y, 2);
+            float chroma = v * s;
+            float h6 = 6.0f * (h - floorf(h));
+            float second = chroma * (1.0f - fabsf(fmodf(h6, 2.0f) - 1.0f));
+            float m = v - chroma;
+            float r1, g1, b1;
+
+            if (h6 < 1.0f) {
+                r1 = chroma; g1 = second; b1 = 0.0f;
+            } else if (h6 < 2.0f) {
+                r1 = second; g1 = chroma; b1 = 0.0f;
+            } else if (h6 < 3.0f) {
+                r1 = 0.0f; g1 = chroma; b1 = second;
+            } else if (h6 < 4.0f) {
+                r1 = 0.0f; g1 = second; b1 = chroma;
+            } else if (h6 < 5.0f) {
+                r1 = second; g1 = 0.0f; b1 = chroma;
+            } else {
+                r1 = chroma; g1 = 0.0f; b1 = second;
             }
-            else{
-                h_des = h*6;
-                if(h_des==0){r=v;g=m;b=m;}
-                else if(h_des>0 && h_des<1){r=v;b=m;g= b+(h_des*c);}
-                else if(h_des<2){g=v;b=m;r= b - (h_des-2)*c;}
-                else if(h_des==2){b=m;r=m;g=v;}
-                else if(h_des>2 && h_des<3){g=v;r=m;b= r + (h_des-2)*c;}
-                else if(h_des < 4){b=v;r=m;g = r - (h_des-4)*c;}
-                else if(h_des == 4){b=v;g=m;r=m;}
-                else{b=v;g=m;r = (h_des-4)*c + g;}
-            }
+
+            set_pixel(im, x, y, 0, r1 + m);
+            set_pixel(im, x, y, 1, g1 + m);
+            set_pixel(im, x, y, 2, b1 + m);
         }
-        temp = (im.data + i);
-        *temp = r;
-        temp += nbPixels;
-        *temp = g;
-        temp += nbPixels;
-        *temp = b;
     }
 }
