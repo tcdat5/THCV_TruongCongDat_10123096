@@ -46,35 +46,37 @@ void draw_line(image im, float x, float y, float dx, float dy)
 // returns: image I such that I[x,y] = sum{i<=x, j<=y}(im[i,j])
 image make_integral_image(image im)
 {
-    int i, j, k, w=im.w, h=im.h, c=im.c;
+    int i, j, k;
     image integ = make_image(im.w, im.h, im.c);
-    // TODO: fill in the integral image
-    for(k=0; k<c; ++k)
-        set_pixel(integ, 0, 0, k, get_pixel(im, 0, 0, k));
-    for(k=0; k<c; ++k){
-        for(i=1; i<w; ++i){
-            set_pixel(integ, i, 0, k,
-                get_pixel(im, i, 0, k) + get_pixel(integ, i-1, 0, k));
-        }
-    }
-    for(k=0; k<c; ++k){
-        for(j=1; j<h; ++j){
-            set_pixel(integ, 0, j, k,
-                get_pixel(im, 0, j, k) + get_pixel(integ, 0, j-1, k));
-        }
-    }
-    for(k=0; k<c; ++k){
-        for(i=1; i<w; ++i){
-            for(j=1; j<h; ++j){
-                set_pixel(integ, i, j, k,
-                    get_pixel(im, i, j, k) +
-                    get_pixel(integ, i-1, j, k) + get_pixel(integ, i, j-1, k)
-                    - get_pixel(integ, i-1, j-1, k));
+
+    /*
+       Do not use get_pixel here: it clamps out-of-range coordinates, while
+       an integral image needs values outside its top/left border to be zero.
+       Keeping a running row sum gives the summed-area-table recurrence in
+       one pass per channel.
+    */
+    for(k = 0; k < im.c; ++k){
+        for(j = 0; j < im.h; ++j){
+            float row_sum = 0;
+            for(i = 0; i < im.w; ++i){
+                int index = i + im.w*j + im.w*im.h*k;
+                row_sum += im.data[index];
+                integ.data[index] = row_sum;
+                if(j > 0) integ.data[index] += integ.data[index - im.w];
             }
         }
     }
-    
+
     return integ;
+}
+
+// Return the integral-image value at (x,y), treating points outside the
+// top/left edge as zero.  This is the convention needed for inclusion-
+// exclusion on a rectangle.
+static float integral_pixel(image integ, int x, int y, int c)
+{
+    if(x < 0 || y < 0 || x >= integ.w || y >= integ.h) return 0;
+    return integ.data[x + integ.w*y + integ.w*integ.h*c];
 }
 
 // Apply a box filter to an image using an integral image for speed
@@ -83,24 +85,33 @@ image make_integral_image(image im)
 // returns: smoothed image
 image box_filter_image(image im, int s)
 {
-    int i,j,k, marg = s/2;
+    assert(s > 0);
+
+    int i, j, k;
+    int left = s/2;
+    int right = s-left-1;
     image integ = make_integral_image(im);
     image S = make_image(im.w, im.h, im.c);
-    float val, norm = s*s;
-    // TODO: fill in S using the integral image.
+    float norm = (float)s*s;
+
+    /*
+       The image boundary is zero-padded, so every output pixel still uses
+       an s by s window and the same normalizer.  Clip the rectangle before
+       looking it up in the integral image; integral_pixel supplies the
+       required zero for x0-1 or y0-1.
+    */
     for(k = 0; k<im.c; ++k){
         for(i=0; i<im.w; ++i){
             for(j=0; j<im.h; ++j){
-                val = 0;
-                if((i+marg) < im.w && (j+marg) < im.h)
-                    val += get_pixel(integ, i+marg, j+marg, k);
-                if((i-marg) < im.w && (j-marg) < im.h)
-                    val += get_pixel(integ, i-marg, j-marg, k);
-                if((i-marg) < im.w && (j+marg) < im.h)
-                    val -= get_pixel(integ, i-marg, j+marg, k);
-                if((i+marg) < im.w && (j-marg) < im.h)
-                    val -= get_pixel(integ, i+marg, j-marg, k);
-                set_pixel(S, i, j, k, val/norm);
+                int x0 = MAX(0, i-left);
+                int y0 = MAX(0, j-left);
+                int x1 = MIN(im.w-1, i+right);
+                int y1 = MIN(im.h-1, j+right);
+                float sum = integral_pixel(integ, x1, y1, k)
+                          - integral_pixel(integ, x0-1, y1, k)
+                          - integral_pixel(integ, x1, y0-1, k)
+                          + integral_pixel(integ, x0-1, y0-1, k);
+                S.data[i + im.w*j + im.w*im.h*k] = sum/norm;
             }
         }
     }
@@ -118,13 +129,16 @@ image time_structure_matrix(image im, image prev, int s)
 {
     int i, j;
     int converted = 0;
+    assert(im.w == prev.w && im.h == prev.h && im.c == prev.c);
+    assert(im.c == 1 || im.c == 3);
+    assert(s > 0);
+
     if(im.c == 3){
         converted = 1;
         im = rgb_to_grayscale(im);
         prev = rgb_to_grayscale(prev);
     }
 
-    // TODO: calculate gradients, structure components, and smooth them
     image gx = make_gx_filter(), gy = make_gy_filter();
     image Ix = convolve_image(im, gx, 1), Iy = convolve_image(im, gy, 1);
     image S = make_image(im.w, im.h, 5);
@@ -134,8 +148,8 @@ image time_structure_matrix(image im, image prev, int s)
             it = get_pixel(prev, i, j, 0) - get_pixel(im, i, j, 0);
             ix = get_pixel(Ix, i, j, 0);
             iy = get_pixel(Iy, i, j, 0);
-            set_pixel(S, i, j, 0, pow(ix, 2));
-            set_pixel(S, i, j, 1, pow(iy, 2));
+            set_pixel(S, i, j, 0, ix*ix);
+            set_pixel(S, i, j, 1, iy*iy);
             set_pixel(S, i, j, 2, ix*iy);
             set_pixel(S, i, j, 3, ix*it);
             set_pixel(S, i, j, 4, iy*it);
@@ -158,39 +172,42 @@ image time_structure_matrix(image im, image prev, int s)
 // int stride: only calculate subset of pixels for speed
 image velocity_image(image S, int stride)
 {
-    image v = make_image(S.w/stride, S.h/stride, 3);
-    int i, j;
-    matrix M = make_matrix(2,2), M_inv = make_matrix(2,2);
+    assert(S.c >= 5);
+    assert(stride > 0);
 
-    for(j = (stride-1)/2; j < S.h; j += stride){
-        for(i = (stride-1)/2; i < S.w; i += stride){
+    int i, j;
+    int offset = (stride-1)/2;
+    image v = make_image(S.w/stride, S.h/stride, 3);
+
+    for(j = offset; j < S.h; j += stride){
+        int vy_index = j/stride;
+        if(vy_index >= v.h) break;
+        for(i = offset; i < S.w; i += stride){
+            int vx_index = i/stride;
+            if(vx_index >= v.w) break;
             float Ixx = S.data[i + S.w*j + 0*S.w*S.h];
             float Iyy = S.data[i + S.w*j + 1*S.w*S.h];
             float Ixy = S.data[i + S.w*j + 2*S.w*S.h];
             float Ixt = S.data[i + S.w*j + 3*S.w*S.h];
             float Iyt = S.data[i + S.w*j + 4*S.w*S.h];
 
-            // TODO: calculate vx and vy using the flow equation
-            float vx = 0;
-            float vy = 0;
-            M.data[0][0] = Ixx;
-            M.data[0][1] = Ixy;
-            M.data[1][0] = Ixy;
-            M.data[1][1] = Iyy;
-            M_inv = matrix_invert(M);
-            if(M_inv.rows == 0 || M_inv.cols == 0){
-                // M could be non-invertible due to flat surface.
+            /*
+               M = [Ixx Ixy; Ixy Iyy].  Use its closed-form inverse rather
+               than allocating a matrix at every sampled pixel.  A small
+               determinant means the local patch has insufficient texture,
+               so its zero-initialized velocity is retained.
+            */
+            double det = (double)Ixx*Iyy - (double)Ixy*Ixy;
+            if(fabs(det) < 1e-12) {
                 continue;
             }
-            vx = M_inv.data[0][0]*Ixt + M_inv.data[0][1]*Iyt;
-            vy = M_inv.data[1][0]*Ixt + M_inv.data[1][1]*Iyt;
+            float vx = (Iyy*Ixt - Ixy*Iyt)/det;
+            float vy = (Ixx*Iyt - Ixy*Ixt)/det;
 
-            set_pixel(v, i/stride, j/stride, 0, vx);
-            set_pixel(v, i/stride, j/stride, 1, vy);
+            set_pixel(v, vx_index, vy_index, 0, vx);
+            set_pixel(v, vx_index, vy_index, 1, vy);
         }
     }
-    free_matrix(M);
-    free_matrix(M_inv);
     return v;
 }
 
